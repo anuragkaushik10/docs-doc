@@ -14,10 +14,11 @@ def render_overview(analysis: RepositoryAnalysis) -> str:
         _section("Framework Clues", analysis.frameworks or ["None detected"]),
         _section("Important Files", analysis.important_files or ["None detected"]),
         _section("Major Folders", analysis.major_folders or ["None detected"]),
-        _section("Entrypoints", analysis.entrypoints or ["None detected"]),
+        _section("Entrypoints", _limit_items(analysis.entrypoints) or ["None detected"]),
         _section(
             "Scripts",
-            [f"{script.name} ({script.source}) -> {script.command}" for script in analysis.scripts] or ["None detected"],
+            _limit_items([f"{script.name} ({script.source}) -> {script.command}" for script in analysis.scripts])
+            or ["None detected"],
         ),
         _section("Probable Flow", analysis.probable_flow or ["No clear flow could be inferred."]),
     ]
@@ -62,7 +63,7 @@ def render_flow_terminal(analysis: RepositoryAnalysis, output_path: str) -> str:
         "",
         analysis.summary,
         "",
-        _section("Entrypoints", analysis.entrypoints or ["None detected"]),
+        _section("Entrypoints", _limit_items(analysis.entrypoints) or ["None detected"]),
         _section("Major Modules", analysis.major_folders or ["None detected"]),
         _section("Dependency Flow", analysis.probable_flow or ["No clear flow could be inferred."]),
         f"Markdown output: {output_path}",
@@ -74,3 +75,10 @@ def _section(title: str, items: list[str]) -> str:
     lines = [f"{title}:"]
     lines.extend(f"- {item}" for item in items)
     return "\n".join(lines)
+
+
+def _limit_items(items: list[str], limit: int = 8) -> list[str]:
+    if len(items) <= limit:
+        return items
+    remaining = len(items) - limit
+    return [*items[:limit], f"... and {remaining} more"]

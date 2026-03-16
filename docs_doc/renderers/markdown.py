@@ -23,11 +23,11 @@ def render_overview_markdown(analysis: RepositoryAnalysis) -> str:
         _markdown_list(analysis.major_folders or ["None detected"]),
         "",
         "## Entrypoints",
-        _markdown_list(analysis.entrypoints or ["None detected"]),
+        _markdown_list(_limit_items(analysis.entrypoints) or ["None detected"]),
         "",
         "## Scripts",
         _markdown_list(
-            [f"`{script.name}` via `{script.source}`: `{script.command}`" for script in analysis.scripts]
+            _limit_items([f"`{script.name}` via `{script.source}`: `{script.command}`" for script in analysis.scripts])
             or ["None detected"]
         ),
         "",
@@ -44,7 +44,7 @@ def render_flow_markdown(analysis: RepositoryAnalysis, include_diagram: bool = T
         analysis.summary,
         "",
         "## Detected Entrypoints",
-        _markdown_list(analysis.entrypoints or ["None detected"]),
+        _markdown_list(_limit_items(analysis.entrypoints) or ["None detected"]),
         "",
         "## Major Modules",
         _markdown_list(analysis.major_folders or ["None detected"]),
@@ -105,3 +105,10 @@ def _start_here(analysis: RepositoryAnalysis) -> list[str]:
         if item not in deduped:
             deduped.append(item)
     return deduped or ["README.md"]
+
+
+def _limit_items(items: list[str], limit: int = 8) -> list[str]:
+    if len(items) <= limit:
+        return items
+    remaining = len(items) - limit
+    return [*items[:limit], f"... and {remaining} more"]

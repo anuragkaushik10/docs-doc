@@ -48,6 +48,15 @@ SAMPLE_PREFIXES = (
     "sample/",
 )
 GENERATED_OUTPUTS = {"REPO_FLOW.md", "REPO_OVERVIEW.md"}
+SECONDARY_PREFIXES = (
+    "docs/",
+    "docs_src/",
+    "tests/",
+    "test/",
+    "data/",
+    "scripts/",
+    "assets/",
+)
 
 
 def detect_stack(index: RepositoryIndex) -> tuple[list[str], list[str], list[str]]:
@@ -60,7 +69,14 @@ def detect_stack(index: RepositoryIndex) -> tuple[list[str], list[str], list[str
 
     if any(record.suffix == ".py" for record in relevant_files) or "pyproject.toml" in files or "requirements.txt" in files:
         stack.add("Python")
-    if any(record.suffix in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"} for record in relevant_files) or "package.json" in files:
+    if (
+        "package.json" in files
+        or any(lockfile in files for lockfile in ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "pnpm-workspace.yaml"))
+        or any(
+            record.suffix in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"} and not _is_secondary_path(record.relative_path)
+            for record in relevant_files
+        )
+    ):
         stack.add("Node.js")
     if "Dockerfile" in files or "docker-compose.yml" in files or "docker-compose.yaml" in files:
         stack.add("Docker")
@@ -191,7 +207,8 @@ def detect_scripts(index: RepositoryIndex) -> list[ScriptCommand]:
 
 
 def detect_important_files(index: RepositoryIndex) -> list[str]:
-    candidates: list[tuple[int, str]] = []
+    root_candidates: list[tuple[int, str]] = []
+    nested_candidates: list[tuple[int, str]] = []
     for record in index.files:
         if _is_sample_path(record.relative_path):
             continue
@@ -199,18 +216,31 @@ def detect_important_files(index: RepositoryIndex) -> list[str]:
             continue
         score = PACKAGE_IMPORTANCE.get(record.relative_path, 0)
         score = max(score, PACKAGE_IMPORTANCE.get(Path(record.relative_path).name, 0))
+        if record.relative_path.count("/") == 0:
+            score += 40
         if score:
-            candidates.append((score, record.relative_path))
+            target = root_candidates if record.relative_path.count("/") == 0 else nested_candidates
+            target.append((score, record.relative_path))
         elif record.relative_path.startswith(".github/workflows/"):
-            candidates.append((70, record.relative_path))
+            nested_candidates.append((20, record.relative_path))
         elif record.relative_path.endswith((".md", ".yml", ".yaml", ".toml", ".json")) and record.relative_path.count("/") == 0:
-            candidates.append((45, record.relative_path))
-    ordered = sorted(candidates, key=lambda item: (-item[0], item[1]))
-    return [path for _, path in ordered[:10]]
+            root_candidates.append((45, record.relative_path))
+    root_ordered = sorted(root_candidates, key=lambda item: (-item[0], item[1]))
+    nested_ordered = sorted(nested_candidates, key=lambda item: (-item[0], item[1]))
+    ordered = [path for _, path in root_ordered[:10]]
+    if len(ordered) < 10:
+        ordered.extend(path for _, path in nested_ordered[: 10 - len(ordered)])
+    return ordered[:10]
 
 
 def detect_entrypoints(index: RepositoryIndex) -> list[str]:
-    entrypoints: set[str] = set()
+    primary_scores: dict[str, int] = {}
+    secondary_scores: dict[str, int] = {}
+
+    def add(path: str, score: int) -> None:
+        target = secondary_scores if _is_secondary_path(path) else primary_scores
+        _add_entrypoint_score(target, path, score)
+
     package_text = index.read_text("package.json")
     if package_text:
         package_data = json.loads(package_text)
@@ -220,7 +250,7 @@ def detect_entrypoints(index: RepositoryIndex) -> list[str]:
                 continue
             for token in re.findall(r"[A-Za-z0-9_./-]+\.(?:js|jsx|ts|tsx|mjs|cjs)", command):
                 if index.has_file(token):
-                    entrypoints.add(token)
+                    add(token, 100)
         for candidate in (
             "src/index.js",
             "src/index.ts",
@@ -236,7 +266,7 @@ def detect_entrypoints(index: RepositoryIndex) -> list[str]:
             "app.ts",
         ):
             if index.has_file(candidate):
-                entrypoints.add(candidate)
+                add(candidate, 70)
 
     pyproject_text = index.read_text("pyproject.toml")
     if pyproject_text:
@@ -248,7 +278,7 @@ def detect_entrypoints(index: RepositoryIndex) -> list[str]:
             candidate = f"{module}.py"
             for maybe in (candidate, f"src/{candidate}"):
                 if index.has_file(maybe):
-                    entrypoints.add(maybe)
+                    add(maybe, 100)
         for candidate in (
             "manage.py",
             "main.py",
@@ -258,7 +288,7 @@ def detect_entrypoints(index: RepositoryIndex) -> list[str]:
             "app/main.py",
         ):
             if index.has_file(candidate):
-                entrypoints.add(candidate)
+                add(candidate, 80)
 
     for record in index.files:
         if _is_sample_path(record.relative_path):
@@ -266,14 +296,23 @@ def detect_entrypoints(index: RepositoryIndex) -> list[str]:
         if record.suffix == ".py":
             text = index.read_text(record.relative_path)
             if text and _has_python_main_guard(text):
-                entrypoints.add(record.relative_path)
-    return sorted(entrypoints)
+                score = 60 if not _is_secondary_path(record.relative_path) else 15
+                add(record.relative_path, score)
+        elif record.relative_path.endswith("__main__.py"):
+            score = 85 if not _is_secondary_path(record.relative_path) else 20
+            add(record.relative_path, score)
+
+    source_scores = primary_scores or secondary_scores
+    ordered = sorted(source_scores.items(), key=lambda item: (-item[1], item[0]))
+    return [path for path, _ in ordered[:25]]
 
 
 def detect_major_folders(index: RepositoryIndex, monorepo_roots: list[str]) -> list[str]:
     if monorepo_roots:
         return monorepo_roots
-    scores: dict[str, int] = {}
+    primary_scores: dict[str, int] = {}
+    primary_code_scores: dict[str, int] = {}
+    secondary_scores: dict[str, int] = {}
     for record in index.files:
         if _is_sample_path(record.relative_path):
             continue
@@ -283,13 +322,33 @@ def detect_major_folders(index: RepositoryIndex, monorepo_roots: list[str]) -> l
         top_level = parts[0]
         if top_level.startswith("."):
             continue
-        scores[top_level] = scores.get(top_level, 0) + (3 if record.suffix in CODE_EXTENSIONS else 1)
-    ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+        weight = 3 if record.suffix in CODE_EXTENSIONS else 1
+        is_secondary = _is_secondary_path(record.relative_path)
+        scores = secondary_scores if is_secondary else primary_scores
+        scores[top_level] = scores.get(top_level, 0) + weight
+        if not is_secondary and record.suffix in CODE_EXTENSIONS:
+            primary_code_scores[top_level] = primary_code_scores.get(top_level, 0) + weight
+        if Path(index.root / top_level / "__init__.py").exists():
+            scores[top_level] += 10
+            if not is_secondary:
+                primary_code_scores[top_level] = primary_code_scores.get(top_level, 0) + 10
+    source_scores = primary_code_scores or primary_scores or secondary_scores
+    ordered = sorted(source_scores.items(), key=lambda item: (-item[1], item[0]))
     return [name for name, _ in ordered[:6]]
 
 
 def _is_sample_path(relative_path: str) -> bool:
     return relative_path.startswith(SAMPLE_PREFIXES)
+
+
+def _is_secondary_path(relative_path: str) -> bool:
+    return relative_path.startswith(SECONDARY_PREFIXES)
+
+
+def _add_entrypoint_score(scores: dict[str, int], path: str, score: int) -> None:
+    existing = scores.get(path, 0)
+    if score > existing:
+        scores[path] = score
 
 
 def _has_python_main_guard(text: str) -> bool:

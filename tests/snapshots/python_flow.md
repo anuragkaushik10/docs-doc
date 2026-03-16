@@ -1,13 +1,12 @@
 # Repo Flow
 
-python_app looks like a Python, Docker, GitHub Actions project with FastAPI clues. The main code seems to live in app, tests, and the likely starting point is app/main.py.
+python_app looks like a Python, Docker, GitHub Actions project with FastAPI clues. The main code seems to live in app, and the likely starting point is app/main.py.
 
 ## Detected Entrypoints
 - app/main.py
 
 ## Major Modules
 - app
-- tests
 
 ## Dependency Flow
 - `app/main.py` appears to fan into app.
