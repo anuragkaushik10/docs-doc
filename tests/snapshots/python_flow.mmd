@@ -1,0 +1,10 @@
+graph TD
+    _env_example[".env.example"]
+    Dockerfile["Dockerfile"]
+    app["app"]
+    app_main_py["app/main.py"]
+    pyproject_toml["pyproject.toml"]
+    _env_example -->|configures| app_main_py
+    Dockerfile -->|configures| app_main_py
+    app_main_py -->|depends on| app
+    pyproject_toml -->|configures| app_main_py

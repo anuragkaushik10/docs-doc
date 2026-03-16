@@ -1,0 +1,8 @@
+{
+  "name": "workspace-root",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev": "node packages/web/src/index.js"
+  }
+}

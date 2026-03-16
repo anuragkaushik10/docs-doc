@@ -1,0 +1,12 @@
+.DS_Store
+.pytest_cache/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+dist/
+build/
+*.egg-info/
+REPO_FLOW.md
+REPO_OVERVIEW.md
