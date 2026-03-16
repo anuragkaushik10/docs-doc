@@ -19,6 +19,25 @@ docs-doc explain path/to/file_or_folder
 docs-doc flow .
 ```
 
+## Run Locally
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+docs-doc overview .
+docs-doc setup .
+docs-doc explain docs_doc/cli.py
+docs-doc flow . --output REPO_FLOW.md
+```
+
+If you do not want to activate the environment, you can run:
+
+```bash
+./.venv/bin/docs-doc overview .
+./.venv/bin/docs-doc flow . --output REPO_FLOW.md
+```
+
 ## Development
 
 ```bash
