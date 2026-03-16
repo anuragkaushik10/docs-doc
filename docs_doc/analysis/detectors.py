@@ -21,7 +21,25 @@ PACKAGE_IMPORTANCE = {
     "Makefile": 74,
 }
 
-CODE_EXTENSIONS = {".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+CODE_EXTENSIONS = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".java",
+    ".kt",
+    ".swift",
+    ".m",
+    ".mm",
+    ".h",
+    ".hpp",
+    ".cpp",
+    ".cxx",
+    ".cs",
+}
 FRAMEWORK_MAP = {
     "fastapi": "FastAPI",
     "flask": "Flask",
@@ -29,6 +47,7 @@ FRAMEWORK_MAP = {
     "express": "Express",
     "next": "Next.js",
     "react": "React",
+    "react-native": "React Native",
     "vue": "Vue",
     "nestjs": "NestJS",
 }
@@ -56,7 +75,10 @@ SECONDARY_PREFIXES = (
     "data/",
     "scripts/",
     "assets/",
+    "recipes/",
+    "recipe/",
 )
+PLATFORM_FOLDERS = {"android", "ios", "windows", "windows-legacy", "macos"}
 
 
 def detect_stack(index: RepositoryIndex) -> tuple[list[str], list[str], list[str]]:
@@ -112,9 +134,16 @@ def detect_stack(index: RepositoryIndex) -> tuple[list[str], list[str], list[str
     package_text = index.read_text("package.json")
     if package_text:
         package_data = json.loads(package_text)
+        package_name = str(package_data.get("name", "")).lower()
+        if (
+            "react-native" in package_name
+            or index.has_file("react-native.config.js")
+            or ("android" in index.top_level_directories() and "ios" in index.top_level_directories())
+        ):
+            frameworks.add("React Native")
         dependencies = {}
         dependencies.update(package_data.get("dependencies", {}))
-        dependencies.update(package_data.get("devDependencies", {}))
+        dependencies.update(package_data.get("peerDependencies", {}))
         for dependency_name in dependencies:
             name = dependency_name.lower()
             if name in FRAMEWORK_MAP:
@@ -206,6 +235,27 @@ def detect_scripts(index: RepositoryIndex) -> list[ScriptCommand]:
     return sorted(scripts, key=lambda script: (script.source, script.name))
 
 
+def detect_project_name(index: RepositoryIndex) -> str:
+    pyproject_text = index.read_text("pyproject.toml")
+    if pyproject_text:
+        data = tomllib.loads(pyproject_text)
+        project_name = data.get("project", {}).get("name")
+        if isinstance(project_name, str) and project_name.strip():
+            return project_name.strip()
+        poetry_name = data.get("tool", {}).get("poetry", {}).get("name")
+        if isinstance(poetry_name, str) and poetry_name.strip():
+            return poetry_name.strip()
+
+    package_text = index.read_text("package.json")
+    if package_text:
+        package_data = json.loads(package_text)
+        package_name = package_data.get("name")
+        if isinstance(package_name, str) and package_name.strip():
+            return package_name.strip()
+
+    return index.repo_name
+
+
 def detect_important_files(index: RepositoryIndex) -> list[str]:
     root_candidates: list[tuple[int, str]] = []
     nested_candidates: list[tuple[int, str]] = []
@@ -244,6 +294,23 @@ def detect_entrypoints(index: RepositoryIndex) -> list[str]:
     package_text = index.read_text("package.json")
     if package_text:
         package_data = json.loads(package_text)
+        for field in ("main", "module", "browser", "react-native"):
+            value = package_data.get(field)
+            if isinstance(value, str):
+                resolved = _resolve_package_file(index, value)
+                if resolved:
+                    add(resolved, 110)
+        bin_field = package_data.get("bin")
+        if isinstance(bin_field, str):
+            resolved = _resolve_package_file(index, bin_field)
+            if resolved:
+                add(resolved, 105)
+        elif isinstance(bin_field, dict):
+            for value in bin_field.values():
+                if isinstance(value, str):
+                    resolved = _resolve_package_file(index, value)
+                    if resolved:
+                        add(resolved, 105)
         for script_name in ("start", "dev", "serve"):
             command = package_data.get("scripts", {}).get(script_name)
             if not command:
@@ -328,6 +395,10 @@ def detect_major_folders(index: RepositoryIndex, monorepo_roots: list[str]) -> l
         scores[top_level] = scores.get(top_level, 0) + weight
         if not is_secondary and record.suffix in CODE_EXTENSIONS:
             primary_code_scores[top_level] = primary_code_scores.get(top_level, 0) + weight
+        if top_level in PLATFORM_FOLDERS:
+            scores[top_level] = scores.get(top_level, 0) + 5
+            if not is_secondary:
+                primary_code_scores[top_level] = primary_code_scores.get(top_level, 0) + 5
         if Path(index.root / top_level / "__init__.py").exists():
             scores[top_level] += 10
             if not is_secondary:
@@ -338,17 +409,36 @@ def detect_major_folders(index: RepositoryIndex, monorepo_roots: list[str]) -> l
 
 
 def _is_sample_path(relative_path: str) -> bool:
-    return relative_path.startswith(SAMPLE_PREFIXES)
+    normalized = relative_path.lower()
+    return normalized.startswith(SAMPLE_PREFIXES)
 
 
 def _is_secondary_path(relative_path: str) -> bool:
-    return relative_path.startswith(SECONDARY_PREFIXES)
+    normalized = relative_path.lower()
+    return normalized.startswith(SECONDARY_PREFIXES)
 
 
 def _add_entrypoint_score(scores: dict[str, int], path: str, score: int) -> None:
     existing = scores.get(path, 0)
     if score > existing:
         scores[path] = score
+
+
+def _resolve_package_file(index: RepositoryIndex, value: str) -> str | None:
+    cleaned = value.strip().lstrip("./")
+    if not cleaned:
+        return None
+    candidates = [cleaned]
+    path = Path(cleaned)
+    if not path.suffix:
+        for suffix in (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"):
+            candidates.append(f"{cleaned}{suffix}")
+            candidates.append(f"{cleaned}/index{suffix}")
+    for candidate in candidates:
+        normalized = Path(candidate).as_posix()
+        if index.has_file(normalized):
+            return normalized
+    return None
 
 
 def _has_python_main_guard(text: str) -> bool:

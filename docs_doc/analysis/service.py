@@ -10,6 +10,7 @@ from docs_doc.analysis.detectors import (
     detect_important_files,
     detect_major_folders,
     detect_monorepo_roots,
+    detect_project_name,
     detect_scripts,
     detect_stack,
 )
@@ -39,6 +40,7 @@ FLOW_EXCLUDED_PREFIXES = (".github/", "tests/", "test/")
 
 def analyze_repository(root: Path) -> RepositoryAnalysis:
     index = discover_repository(root)
+    repo_name = detect_project_name(index)
     stack, frameworks, package_managers = detect_stack(index)
     monorepo_roots = detect_monorepo_roots(index)
     scripts = detect_scripts(index)
@@ -55,11 +57,11 @@ def analyze_repository(root: Path) -> RepositoryAnalysis:
         file_dependencies=file_dependencies,
     )
     setup = build_setup_hints(index, stack, package_managers, scripts, entrypoints)
-    summary = _build_summary(index.repo_name, stack, frameworks, entrypoints, major_folders, monorepo_roots)
+    summary = _build_summary(repo_name, stack, frameworks, entrypoints, major_folders, monorepo_roots)
     probable_flow = _build_probable_flow(graph, entrypoints, frameworks, setup)
     return RepositoryAnalysis(
         root=index.root,
-        repo_name=index.repo_name,
+        repo_name=repo_name,
         stack=stack,
         package_managers=package_managers,
         frameworks=frameworks,

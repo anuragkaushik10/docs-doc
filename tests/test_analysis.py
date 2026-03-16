@@ -90,6 +90,35 @@ def test_entrypoint_detection_requires_real_main_guard(tmp_path: Path) -> None:
     assert "REPO_FLOW.md" not in analysis.important_files
 
 
+def test_node_library_uses_manifest_name_and_main_entrypoint(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        """
+        {
+          "name": "react-native-demo",
+          "main": "CodePush.js",
+          "devDependencies": {
+            "express": "^5.0.0"
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    (tmp_path / "CodePush.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (tmp_path / "react-native.config.js").write_text("module.exports = {};\n", encoding="utf-8")
+    (tmp_path / "ios").mkdir()
+    (tmp_path / "ios" / "CodePush.m").write_text("@implementation CodePush\n@end\n", encoding="utf-8")
+    (tmp_path / "android").mkdir()
+    (tmp_path / "android" / "build.gradle").write_text("apply plugin: 'com.android.library'\n", encoding="utf-8")
+
+    analysis = analyze_repository(tmp_path)
+
+    assert analysis.repo_name == "react-native-demo"
+    assert analysis.entrypoints[0] == "CodePush.js"
+    assert "React Native" in analysis.frameworks
+    assert "Express" not in analysis.frameworks
+    assert "ios" in analysis.major_folders or "android" in analysis.major_folders
+
+
 def test_flow_markdown_snapshot() -> None:
     analysis = analyze_repository(fixture_path("python_app"))
     expected = (Path(__file__).parent / "snapshots" / "python_flow.md").read_text(encoding="utf-8")

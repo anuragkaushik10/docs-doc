@@ -12,7 +12,7 @@ def test_overview_command() -> None:
     result = RUNNER.invoke(app, ["overview", str(FIXTURES / "node_app")])
 
     assert result.exit_code == 0
-    assert "Repository: node_app" in result.stdout
+    assert "Repository: node-app" in result.stdout
     assert "src/index.js" in result.stdout
 
 
