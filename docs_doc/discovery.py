@@ -29,7 +29,11 @@ def discover_repository(root: Path) -> RepositoryIndex:
     directories: set[str] = set()
 
     for current_root, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(name for name in dirnames if name not in IGNORED_DIRECTORIES)
+        dirnames[:] = sorted(
+            name
+            for name in dirnames
+            if name not in IGNORED_DIRECTORIES and not name.endswith(".egg-info")
+        )
         current_path = Path(current_root)
         if current_path != root:
             directories.add(current_path.relative_to(root).as_posix())

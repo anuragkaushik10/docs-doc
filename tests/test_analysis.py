@@ -57,6 +57,39 @@ def test_generic_repo_degrades_gracefully() -> None:
     assert analysis.probable_flow
 
 
+def test_nested_fixture_manifests_do_not_pollute_root_analysis(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\nversion = '0.1.0'\n", encoding="utf-8")
+    (tmp_path / "docs_doc").mkdir()
+    (tmp_path / "docs_doc" / "__main__.py").write_text("print('hello')\n", encoding="utf-8")
+    (tmp_path / "tests" / "fixtures" / "demo").mkdir(parents=True)
+    (tmp_path / "tests" / "fixtures" / "demo" / "package.json").write_text('{"name":"demo-node"}\n', encoding="utf-8")
+
+    analysis = analyze_repository(tmp_path)
+
+    assert analysis.stack == ["Python"]
+    assert "package.json" not in analysis.important_files
+
+
+def test_entrypoint_detection_requires_real_main_guard(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\nversion = '0.1.0'\n", encoding="utf-8")
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "runner.py").write_text(
+        "def main():\n    return 1\n\nif __name__ == \"__main__\":\n    main()\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "app" / "notes.py").write_text(
+        "TEXT = '__main__ is only mentioned here'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "REPO_FLOW.md").write_text("# generated\n", encoding="utf-8")
+
+    analysis = analyze_repository(tmp_path)
+
+    assert "app/runner.py" in analysis.entrypoints
+    assert "app/notes.py" not in analysis.entrypoints
+    assert "REPO_FLOW.md" not in analysis.important_files
+
+
 def test_flow_markdown_snapshot() -> None:
     analysis = analyze_repository(fixture_path("python_app"))
     expected = (Path(__file__).parent / "snapshots" / "python_flow.md").read_text(encoding="utf-8")

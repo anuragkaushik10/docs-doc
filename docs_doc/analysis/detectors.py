@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import re
 import tomllib
@@ -37,6 +38,16 @@ STACK_ORDER = {
     "Docker": 2,
     "GitHub Actions": 3,
 }
+SAMPLE_PREFIXES = (
+    "tests/fixtures/",
+    "test/fixtures/",
+    "fixtures/",
+    "examples/",
+    "example/",
+    "samples/",
+    "sample/",
+)
+GENERATED_OUTPUTS = {"REPO_FLOW.md", "REPO_OVERVIEW.md"}
 
 
 def detect_stack(index: RepositoryIndex) -> tuple[list[str], list[str], list[str]]:
@@ -44,11 +55,12 @@ def detect_stack(index: RepositoryIndex) -> tuple[list[str], list[str], list[str
     frameworks: set[str] = set()
     package_managers: set[str] = set()
 
-    files = {record.relative_path for record in index.files}
+    relevant_files = [record for record in index.files if not _is_sample_path(record.relative_path)]
+    files = {record.relative_path for record in relevant_files}
 
-    if any(record.suffix == ".py" for record in index.files) or "pyproject.toml" in files or "requirements.txt" in files:
+    if any(record.suffix == ".py" for record in relevant_files) or "pyproject.toml" in files or "requirements.txt" in files:
         stack.add("Python")
-    if any(record.suffix in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"} for record in index.files) or "package.json" in files:
+    if any(record.suffix in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"} for record in relevant_files) or "package.json" in files:
         stack.add("Node.js")
     if "Dockerfile" in files or "docker-compose.yml" in files or "docker-compose.yaml" in files:
         stack.add("Docker")
@@ -181,6 +193,10 @@ def detect_scripts(index: RepositoryIndex) -> list[ScriptCommand]:
 def detect_important_files(index: RepositoryIndex) -> list[str]:
     candidates: list[tuple[int, str]] = []
     for record in index.files:
+        if _is_sample_path(record.relative_path):
+            continue
+        if Path(record.relative_path).name in GENERATED_OUTPUTS:
+            continue
         score = PACKAGE_IMPORTANCE.get(record.relative_path, 0)
         score = max(score, PACKAGE_IMPORTANCE.get(Path(record.relative_path).name, 0))
         if score:
@@ -245,9 +261,11 @@ def detect_entrypoints(index: RepositoryIndex) -> list[str]:
                 entrypoints.add(candidate)
 
     for record in index.files:
+        if _is_sample_path(record.relative_path):
+            continue
         if record.suffix == ".py":
             text = index.read_text(record.relative_path)
-            if text and "__main__" in text:
+            if text and _has_python_main_guard(text):
                 entrypoints.add(record.relative_path)
     return sorted(entrypoints)
 
@@ -257,6 +275,8 @@ def detect_major_folders(index: RepositoryIndex, monorepo_roots: list[str]) -> l
         return monorepo_roots
     scores: dict[str, int] = {}
     for record in index.files:
+        if _is_sample_path(record.relative_path):
+            continue
         parts = record.relative_path.split("/")
         if len(parts) < 2:
             continue
@@ -266,6 +286,33 @@ def detect_major_folders(index: RepositoryIndex, monorepo_roots: list[str]) -> l
         scores[top_level] = scores.get(top_level, 0) + (3 if record.suffix in CODE_EXTENSIONS else 1)
     ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
     return [name for name, _ in ordered[:6]]
+
+
+def _is_sample_path(relative_path: str) -> bool:
+    return relative_path.startswith(SAMPLE_PREFIXES)
+
+
+def _has_python_main_guard(text: str) -> bool:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    for node in tree.body:
+        if not isinstance(node, ast.If):
+            continue
+        comparison = node.test
+        if not isinstance(comparison, ast.Compare):
+            continue
+        if len(comparison.ops) != 1 or not isinstance(comparison.ops[0], ast.Eq):
+            continue
+        if not isinstance(comparison.left, ast.Name) or comparison.left.id != "__name__":
+            continue
+        if len(comparison.comparators) != 1:
+            continue
+        comparator = comparison.comparators[0]
+        if isinstance(comparator, ast.Constant) and comparator.value == "__main__":
+            return True
+    return False
 
 
 def build_setup_hints(
